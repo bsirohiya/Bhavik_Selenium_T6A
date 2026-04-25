@@ -1,0 +1,113 @@
+pipeline {
+    agent any
+
+    environment {
+        PYTHON_PATH  = 'C:\Users\BHAVIK\AppData\Local\Microsoft\WindowsApps\python.exe'
+        VENV_DIR     = '.venv'
+        REPORTS_DIR  = 'reports'
+        TEST_DIR     = 'tests'
+        HTML_REPORT  = 'reports\\test_report.html'
+        JUNIT_REPORT = 'reports\\junit_report.xml'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                echo '>>> Checking out source code from SCM...'
+                checkout scm
+            }
+        }
+
+        stage('Verify Python') {
+            steps {
+                echo '>>> Checking Python installation...'
+                bat '''
+                    @echo off
+                    "%PYTHON_PATH%" --version
+                    if %errorlevel% neq 0 (
+                        echo [ERROR] Python not found!
+                        exit /b 1
+                    )
+                '''
+            }
+        }
+
+        stage('Setup Python venv') {
+            steps {
+                echo '>>> Creating virtual environment...'
+                bat '''
+                    @echo off
+                    "%PYTHON_PATH%" -m venv .venv
+                    call .venv\\Scripts\\activate.bat
+                    python -m pip install --upgrade pip
+                    echo [OK] venv created and pip upgraded
+                '''
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                echo '>>> Installing dependencies...'
+                bat '''
+                    @echo off
+                    call .venv\\Scripts\\activate.bat
+                    pip install -r requirements.txt
+                    pip install pytest pytest-html
+                    echo [OK] Dependencies installed
+                '''
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                echo '>>> Running pytest...'
+                bat '''
+                    @echo off
+                    call .venv\\Scripts\\activate.bat
+                    if not exist reports mkdir reports
+                    pytest tests ^
+                        --html=reports\\test_report.html ^
+                        --self-contained-html ^
+                        --junitxml=reports\\junit_report.xml ^
+                        -v ^
+                        --tb=short
+                '''
+            }
+        }
+
+        stage('Publish Reports') {
+            steps {
+                junit allowEmptyResults: true, testResults: 'reports/junit_report.xml'
+                publishHTML(target: [
+                    allowMissing: true,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: 'reports',
+                    reportFiles: 'test_report.html',
+                    reportName: 'Pytest HTML Report'
+                ])
+            }
+        }
+    }
+
+    post {
+        always {
+            echo '>>> Archiving reports...'
+            archiveArtifacts artifacts: 'reports/**/*', allowEmptyArchive: true
+            bat 'if exist .venv rmdir /s /q .venv'
+        }
+        success {
+            echo 'All tests passed!'
+        }
+        failure {
+            echo 'Some tests failed. Check reports.'
+        }
+    }
+}
